@@ -173,20 +173,9 @@ master_initialize_node_metadata(PG_FUNCTION_ARGS)
 Datum
 get_shard_id_for_distribution_column(PG_FUNCTION_ARGS)
 {
-	Oid relationId = InvalidOid;
-	Datum distributionValue = 0;
-
-	Var *distributionColumn = NULL;
-	char distributionMethod = 0;
-	Oid expectedElementType = InvalidOid;
-	Oid inputElementType = InvalidOid;
-	DistTableCacheEntry *cacheEntry = NULL;
-	int shardCount = 0;
-	ShardInterval **shardIntervalArray = NULL;
-	FmgrInfo *hashFunction = NULL;
-	FmgrInfo *compareFunction = NULL;
-	bool useBinarySearch = true;
 	ShardInterval *shardInterval = NULL;
+	char distributionMethod = 0;
+	Oid relationId = InvalidOid;
 
 	/*
 	 * To have optional parameter as NULL, we defined this UDF as not strict, therefore
@@ -221,6 +210,9 @@ get_shard_id_for_distribution_column(PG_FUNCTION_ARGS)
 	else if (distributionMethod == DISTRIBUTE_BY_HASH ||
 			 distributionMethod == DISTRIBUTE_BY_RANGE)
 	{
+		Oid distributionDataType = InvalidOid;
+		Datum distributionValue = 0;
+
 		/* if given table is not reference table, distributionValue cannot be NULL */
 		if (PG_ARGISNULL(1))
 		{
@@ -230,35 +222,9 @@ get_shard_id_for_distribution_column(PG_FUNCTION_ARGS)
 		}
 
 		distributionValue = PG_GETARG_DATUM(1);
-
-		distributionColumn = PartitionKey(relationId);
-		expectedElementType = distributionColumn->vartype;
-		inputElementType = get_fn_expr_argtype(fcinfo->flinfo, 1);
-		if (expectedElementType != inputElementType)
-		{
-			ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
-							errmsg("invalid distribution value type"),
-							errdetail("Type of the value does not match the type of the "
-									  "distribution column. Expected type id: %d, given "
-									  "type id: %d", expectedElementType,
-									  inputElementType)));
-		}
-
-		cacheEntry = DistributedTableCacheEntry(relationId);
-
-		if (distributionMethod == DISTRIBUTE_BY_HASH &&
-			cacheEntry->hasUniformHashDistribution)
-		{
-			useBinarySearch = false;
-		}
-
-		shardCount = cacheEntry->shardIntervalArrayLength;
-		shardIntervalArray = cacheEntry->sortedShardIntervalArray;
-		hashFunction = cacheEntry->hashFunction;
-		compareFunction = cacheEntry->shardIntervalCompareFunction;
-		shardInterval = FindShardInterval(distributionValue, shardIntervalArray,
-										  shardCount, distributionMethod, compareFunction,
-										  hashFunction, useBinarySearch);
+		distributionDataType = get_fn_expr_argtype(fcinfo->flinfo, 1);
+		shardInterval = DistributionValueShard(relationId, distributionDataType,
+											   distributionValue);
 	}
 	else
 	{
@@ -274,6 +240,58 @@ get_shard_id_for_distribution_column(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_INT64(NULL);
+}
+
+
+/*
+ * DistributionValueShard finds the shard which contains the given value of the
+ * distribution column.
+ */
+ShardInterval *
+DistributionValueShard(Oid relationId, Oid distributionDataType, Datum distributionValue)
+{
+	ShardInterval *shardInterval = NULL;
+	ShardInterval **shardIntervalArray = NULL;
+	DistTableCacheEntry *cacheEntry = NULL;
+	Var *distributionColumn = NULL;
+	Oid expectedDataType = InvalidOid;
+	FmgrInfo *hashFunction = NULL;
+	FmgrInfo *compareFunction = NULL;
+	bool useBinarySearch = true;
+	char distributionMethod = 0;
+	int shardCount = 0;
+
+	distributionColumn = PartitionKey(relationId);
+	expectedDataType = distributionColumn->vartype;
+	if (expectedDataType != distributionDataType)
+	{
+		ereport(ERROR, (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						errmsg("invalid distribution value type"),
+						errdetail("Type of the value does not match the type of the "
+								  "distribution column. Expected type id: %d, given "
+								  "type id: %d", expectedDataType,
+								  distributionDataType)));
+	}
+
+	cacheEntry = DistributedTableCacheEntry(relationId);
+	distributionMethod = PartitionMethod(relationId);
+
+	if (distributionMethod == DISTRIBUTE_BY_HASH &&
+		cacheEntry->hasUniformHashDistribution)
+	{
+		useBinarySearch = false;
+	}
+
+	shardIntervalArray = cacheEntry->sortedShardIntervalArray;
+	shardCount = cacheEntry->shardIntervalArrayLength;
+	compareFunction = cacheEntry->shardIntervalCompareFunction;
+	hashFunction = cacheEntry->hashFunction;
+
+	shardInterval = FindShardInterval(distributionValue, shardIntervalArray,
+									  shardCount, distributionMethod, compareFunction,
+									  hashFunction, useBinarySearch);
+
+	return shardInterval;
 }
 
 

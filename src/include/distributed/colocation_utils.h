@@ -29,6 +29,8 @@ uint32 ColocationId(int shardCount, int replicationFactor, Oid distributionColum
 extern uint32 CreateColocationGroup(int shardCount, int replicationFactor,
 									Oid distributionColumnType);
 extern uint32 GetNextColocationId(void);
+extern uint32 ColocationGroupShardCount(uint32 colocationId);
+extern void UpdateColocationGroupShardCount(uint32 colocationId, int shardCount);
 extern void CheckReplicationModel(Oid sourceRelationId, Oid targetRelationId);
 extern void CheckDistributionColumnType(Oid sourceRelationId, Oid targetRelationId);
 

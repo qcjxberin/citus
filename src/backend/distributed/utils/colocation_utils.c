@@ -523,6 +523,97 @@ GetNextColocationId()
 
 
 /*
+ *
+ */
+uint32
+ColocationGroupShardCount(uint32 colocationId)
+{
+	Relation pgDistColocation = NULL;
+	SysScanDesc scanDescriptor = NULL;
+	TupleDesc tupleDescriptor = NULL;
+	HeapTuple heapTuple = NULL;
+	int shardCount = 0;
+	int scanKeyCount = 1;
+	ScanKeyData scanKey[scanKeyCount];
+	bool isNull = false;
+	bool indexOK = false;
+
+	ScanKeyInit(&scanKey[0], Anum_pg_dist_colocation_colocationid,
+				BTEqualStrategyNumber, F_INT4EQ, UInt32GetDatum(colocationId));
+
+	pgDistColocation = heap_open(DistColocationRelationId(), ShareLock);
+	tupleDescriptor = RelationGetDescr(pgDistColocation);
+	scanDescriptor = systable_beginscan(pgDistColocation, InvalidOid, indexOK,
+										NULL, scanKeyCount, scanKey);
+
+	heapTuple = systable_getnext(scanDescriptor);
+	if (!HeapTupleIsValid(heapTuple))
+	{
+		ereport(ERROR, (errmsg("could not find valid entry for colocation group %d",
+							   colocationId)));
+	}
+
+	shardCount = heap_getattr(heapTuple, Anum_pg_dist_colocation_shardcount,
+							  tupleDescriptor, &isNull);
+
+	systable_endscan(scanDescriptor);
+	heap_close(pgDistColocation, ShareLock);
+
+	return shardCount;
+}
+
+
+void
+UpdateColocationGroupShardCount(uint32 colocationId, int shardCount)
+{
+	Relation pgDistColocation = NULL;
+	SysScanDesc scanDescriptor = NULL;
+	TupleDesc tupleDescriptor = NULL;
+	HeapTuple heapTuple = NULL;
+	int scanKeyCount = 1;
+	ScanKeyData scanKey[scanKeyCount];
+	bool indexOK = false;
+	Datum values[Natts_pg_dist_colocation];
+	bool isNull[Natts_pg_dist_colocation];
+	bool replace[Natts_pg_dist_colocation];
+
+	ScanKeyInit(&scanKey[0], Anum_pg_dist_colocation_colocationid,
+				BTEqualStrategyNumber, F_INT4EQ, UInt32GetDatum(colocationId));
+
+	pgDistColocation = heap_open(DistColocationRelationId(), ExclusiveLock);
+	tupleDescriptor = RelationGetDescr(pgDistColocation);
+	scanDescriptor = systable_beginscan(pgDistColocation, InvalidOid, indexOK,
+										NULL, scanKeyCount, scanKey);
+
+	heapTuple = systable_getnext(scanDescriptor);
+	if (!HeapTupleIsValid(heapTuple))
+	{
+		ereport(ERROR, (errmsg("could not find valid entry for colocation group %d",
+							   colocationId)));
+	}
+
+	memset(values, 0, sizeof(replace));
+	memset(isNull, false, sizeof(isNull));
+	memset(replace, false, sizeof(replace));
+
+	values[Anum_pg_dist_colocation_shardcount - 1] = Int32GetDatum(shardCount);
+	isNull[Anum_pg_dist_colocation_shardcount - 1] = false;
+	replace[Anum_pg_dist_colocation_shardcount - 1] = true;
+
+	heapTuple = heap_modify_tuple(heapTuple, tupleDescriptor, values, isNull, replace);
+	simple_heap_update(pgDistColocation, &heapTuple->t_self, heapTuple);
+
+	CatalogUpdateIndexes(pgDistColocation, heapTuple);
+	CitusInvalidateRelcacheByRelid(DistColocationRelationId());
+
+	CommandCounterIncrement();
+
+	systable_endscan(scanDescriptor);
+	heap_close(pgDistColocation, NoLock);
+}
+
+
+/*
  * CheckReplicationModel checks if given relations are from the same
  * replication model. Otherwise, it errors out.
  */

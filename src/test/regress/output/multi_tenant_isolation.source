@@ -1,0 +1,377 @@
+--
+-- MULTI_TENANT_ISOLATION
+--
+-- Tests tenant isolation feature
+--
+SET citus.shard_replication_factor TO 1;
+SET citus.shard_count to 2;
+CREATE SCHEMA tenant_isolation;
+SET search_path to tenant_isolation;
+CREATE TABLE lineitem_streaming  (
+	l_orderkey bigint not null,
+	l_partkey integer not null,
+	l_suppkey integer not null,
+	l_linenumber integer not null,
+	l_quantity decimal(15, 2) not null,
+	l_extendedprice decimal(15, 2) not null,
+	l_discount decimal(15, 2) not null,
+	l_tax decimal(15, 2) not null,
+	l_returnflag char(1) not null,
+	l_linestatus char(1) not null,
+	l_shipdate date not null,
+	l_commitdate date not null,
+	l_receiptdate date not null,
+	l_shipinstruct char(25) not null,
+	l_shipmode char(10) not null,
+	l_comment varchar(44) not null);
+SELECT create_distributed_table('lineitem_streaming', 'l_orderkey');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+CREATE TABLE orders_streaming  (
+	o_orderkey bigint not null,
+	o_custkey integer not null,
+	o_orderstatus char(1) not null,
+	o_totalprice decimal(15,2) not null,
+	o_orderdate date not null,
+	o_orderpriority char(15) not null,
+	o_clerk char(15) not null,
+	o_shippriority integer not null,
+	o_comment varchar(79) not null);
+SELECT create_distributed_table('orders_streaming', 'o_orderkey');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+\copy lineitem_streaming FROM '@abs_srcdir@/data/lineitem.1.data' with delimiter '|'
+\copy lineitem_streaming FROM '@abs_srcdir@/data/lineitem.2.data' with delimiter '|'
+\copy orders_streaming FROM '@abs_srcdir@/data/orders.1.data' with delimiter '|'
+\copy orders_streaming FROM '@abs_srcdir@/data/orders.2.data' with delimiter '|'
+SELECT count(*) FROM lineitem_streaming;
+ count 
+-------
+ 12000
+(1 row)
+
+SELECT count(*) FROM orders_streaming;
+ count 
+-------
+  2984
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 99;
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 100;
+ count 
+-------
+     5
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 101;
+ count 
+-------
+     3
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 102;
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 103;
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 99;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 100;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 101;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 102;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 103;
+ count 
+-------
+     1
+(1 row)
+
+SELECT * FROM pg_dist_shard ORDER BY shardminvalue::BIGINT, logicalrelid;
+    logicalrelid    | shardid | shardstorage | shardminvalue | shardmaxvalue 
+--------------------+---------+--------------+---------------+---------------
+ lineitem_streaming | 1360000 | t            | -2147483648   | -1
+ orders_streaming   | 1360002 | t            | -2147483648   | -1
+ lineitem_streaming | 1360001 | t            | 0             | 2147483647
+ orders_streaming   | 1360003 | t            | 0             | 2147483647
+(4 rows)
+
+SELECT * FROM pg_dist_colocation;
+ colocationid | shardcount | replicationfactor | distributioncolumntype 
+--------------+------------+-------------------+------------------------
+            1 |          2 |                 1 |                     20
+(1 row)
+
+SELECT isolate_tenant_to_new_shard('lineitem_streaming', 100::bigint);
+ isolate_tenant_to_new_shard 
+-----------------------------
+                     1360008
+(1 row)
+
+SELECT isolate_tenant_to_new_shard('lineitem_streaming', 101::bigint);
+ isolate_tenant_to_new_shard 
+-----------------------------
+                     1360014
+(1 row)
+
+-- create an MX node
+SELECT start_metadata_sync_to_node('localhost', :worker_1_port);
+ start_metadata_sync_to_node 
+-----------------------------
+ 
+(1 row)
+
+SELECT isolate_tenant_to_new_shard('orders_streaming', 102::bigint);
+ isolate_tenant_to_new_shard 
+-----------------------------
+                     1360017
+(1 row)
+
+SELECT isolate_tenant_to_new_shard('orders_streaming', 103::bigint);
+ isolate_tenant_to_new_shard 
+-----------------------------
+                     1360023
+(1 row)
+
+SELECT isolate_tenant_to_new_shard('lineitem_streaming', 100::bigint);
+ERROR:  table "lineitem_streaming" has already isolated for the given value
+SELECT isolate_tenant_to_new_shard('orders_streaming', 101::bigint);
+ERROR:  table "orders_streaming" has already isolated for the given value
+SELECT count(*) FROM lineitem_streaming;
+ count 
+-------
+ 12000
+(1 row)
+
+SELECT count(*) FROM orders_streaming;
+ count 
+-------
+  2984
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 99;
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 100;
+ count 
+-------
+     5
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 101;
+ count 
+-------
+     3
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 102;
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM lineitem_streaming WHERE l_orderkey = 103;
+ count 
+-------
+     4
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 99;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 100;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 101;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 102;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM orders_streaming WHERE o_orderkey = 103;
+ count 
+-------
+     1
+(1 row)
+
+SELECT * FROM pg_dist_shard ORDER BY shardminvalue::BIGINT, logicalrelid;
+    logicalrelid    | shardid | shardstorage | shardminvalue | shardmaxvalue 
+--------------------+---------+--------------+---------------+---------------
+ lineitem_streaming | 1360025 | t            | -2147483648   | -136164586
+ orders_streaming   | 1360022 | t            | -2147483648   | -136164586
+ lineitem_streaming | 1360026 | t            | -136164585    | -136164585
+ orders_streaming   | 1360023 | t            | -136164585    | -136164585
+ lineitem_streaming | 1360027 | t            | -136164584    | -85071815
+ orders_streaming   | 1360024 | t            | -136164584    | -85071815
+ lineitem_streaming | 1360014 | t            | -85071814     | -85071814
+ orders_streaming   | 1360011 | t            | -85071814     | -85071814
+ lineitem_streaming | 1360015 | t            | -85071813     | -1
+ orders_streaming   | 1360012 | t            | -85071813     | -1
+ lineitem_streaming | 1360007 | t            | 0             | 108199380
+ orders_streaming   | 1360004 | t            | 0             | 108199380
+ lineitem_streaming | 1360008 | t            | 108199381     | 108199381
+ orders_streaming   | 1360005 | t            | 108199381     | 108199381
+ lineitem_streaming | 1360019 | t            | 108199382     | 412880111
+ orders_streaming   | 1360016 | t            | 108199382     | 412880111
+ lineitem_streaming | 1360020 | t            | 412880112     | 412880112
+ orders_streaming   | 1360017 | t            | 412880112     | 412880112
+ lineitem_streaming | 1360021 | t            | 412880113     | 2147483647
+ orders_streaming   | 1360018 | t            | 412880113     | 2147483647
+(20 rows)
+
+SELECT * FROM pg_dist_colocation;
+ colocationid | shardcount | replicationfactor | distributioncolumntype 
+--------------+------------+-------------------+------------------------
+            1 |         10 |                 1 |                     20
+(1 row)
+
+SELECT * FROM pg_dist_shard_placement ORDER BY nodeport, shardid;
+ shardid | shardstate | shardlength | nodename  | nodeport | placementid 
+---------+------------+-------------+-----------+----------+-------------
+ 1360011 |          1 |           0 | localhost |    57637 |          42
+ 1360012 |          1 |           0 | localhost |    57637 |          43
+ 1360014 |          1 |           0 | localhost |    57637 |          45
+ 1360015 |          1 |           0 | localhost |    57637 |          46
+ 1360022 |          1 |           0 | localhost |    57637 |          53
+ 1360023 |          1 |           0 | localhost |    57637 |          54
+ 1360024 |          1 |           0 | localhost |    57637 |          55
+ 1360025 |          1 |           0 | localhost |    57637 |          56
+ 1360026 |          1 |           0 | localhost |    57637 |          57
+ 1360027 |          1 |           0 | localhost |    57637 |          58
+ 1360004 |          1 |           0 | localhost |    57638 |          35
+ 1360005 |          1 |           0 | localhost |    57638 |          36
+ 1360007 |          1 |           0 | localhost |    57638 |          38
+ 1360008 |          1 |           0 | localhost |    57638 |          39
+ 1360016 |          1 |           0 | localhost |    57638 |          47
+ 1360017 |          1 |           0 | localhost |    57638 |          48
+ 1360018 |          1 |           0 | localhost |    57638 |          49
+ 1360019 |          1 |           0 | localhost |    57638 |          50
+ 1360020 |          1 |           0 | localhost |    57638 |          51
+ 1360021 |          1 |           0 | localhost |    57638 |          52
+(20 rows)
+
+-- connect to the worker node with metadata
+\c - - - :worker_1_port
+SET search_path to tenant_isolation;
+-- check mx tables
+SELECT count(*) FROM lineitem_streaming;
+ count 
+-------
+ 12000
+(1 row)
+
+SELECT count(*) FROM orders_streaming;
+ count 
+-------
+  2984
+(1 row)
+
+-- check shards
+\d
+                        List of relations
+      Schema      |            Name            | Type  |  Owner   
+------------------+----------------------------+-------+----------
+ tenant_isolation | lineitem_streaming         | table | postgres
+ tenant_isolation | lineitem_streaming_1360014 | table | postgres
+ tenant_isolation | lineitem_streaming_1360015 | table | postgres
+ tenant_isolation | lineitem_streaming_1360025 | table | postgres
+ tenant_isolation | lineitem_streaming_1360026 | table | postgres
+ tenant_isolation | lineitem_streaming_1360027 | table | postgres
+ tenant_isolation | orders_streaming           | table | postgres
+ tenant_isolation | orders_streaming_1360011   | table | postgres
+ tenant_isolation | orders_streaming_1360012   | table | postgres
+ tenant_isolation | orders_streaming_1360022   | table | postgres
+ tenant_isolation | orders_streaming_1360023   | table | postgres
+ tenant_isolation | orders_streaming_1360024   | table | postgres
+(12 rows)
+
+-- check MX metadata
+SELECT * FROM pg_dist_shard ORDER BY shardminvalue::BIGINT, logicalrelid;
+    logicalrelid    | shardid | shardstorage | shardminvalue | shardmaxvalue 
+--------------------+---------+--------------+---------------+---------------
+ lineitem_streaming | 1360025 | t            | -2147483648   | -136164586
+ orders_streaming   | 1360022 | t            | -2147483648   | -136164586
+ lineitem_streaming | 1360026 | t            | -136164585    | -136164585
+ orders_streaming   | 1360023 | t            | -136164585    | -136164585
+ lineitem_streaming | 1360027 | t            | -136164584    | -85071815
+ orders_streaming   | 1360024 | t            | -136164584    | -85071815
+ lineitem_streaming | 1360014 | t            | -85071814     | -85071814
+ orders_streaming   | 1360011 | t            | -85071814     | -85071814
+ lineitem_streaming | 1360015 | t            | -85071813     | -1
+ orders_streaming   | 1360012 | t            | -85071813     | -1
+ lineitem_streaming | 1360007 | t            | 0             | 108199380
+ orders_streaming   | 1360004 | t            | 0             | 108199380
+ lineitem_streaming | 1360008 | t            | 108199381     | 108199381
+ orders_streaming   | 1360005 | t            | 108199381     | 108199381
+ lineitem_streaming | 1360019 | t            | 108199382     | 412880111
+ orders_streaming   | 1360016 | t            | 108199382     | 412880111
+ lineitem_streaming | 1360020 | t            | 412880112     | 412880112
+ orders_streaming   | 1360017 | t            | 412880112     | 412880112
+ lineitem_streaming | 1360021 | t            | 412880113     | 2147483647
+ orders_streaming   | 1360018 | t            | 412880113     | 2147483647
+(20 rows)
+
+-- return to master node
+\c - - - :master_port
+-- create an MX node
+SELECT stop_metadata_sync_to_node('localhost', :worker_1_port);
+ stop_metadata_sync_to_node 
+----------------------------
+ 
+(1 row)
+
+DROP SCHEMA tenant_isolation CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to table tenant_isolation.lineitem_streaming
+drop cascades to table tenant_isolation.orders_streaming
+ALTER SEQUENCE pg_catalog.pg_dist_colocationid_seq RESTART 1;
