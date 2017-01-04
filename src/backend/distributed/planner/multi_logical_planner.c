@@ -1037,15 +1037,8 @@ UsedTableEntryList(Query *query)
 	ExtractRangeTableIndexWalker((Node *) query->jointree, &joinTreeTableIndexList);
 	foreach(joinTreeTableIndexCell, joinTreeTableIndexList)
 	{
-		/*
-		 * Join tree's range table index starts from 1 in the query tree. But,
-		 * list indexes start from 0.
-		 */
 		int joinTreeTableIndex = lfirst_int(joinTreeTableIndexCell);
-		int rangeTableListIndex = joinTreeTableIndex - 1;
-		RangeTblEntry *rangeTableEntry =
-			(RangeTblEntry *) list_nth(rangeTableList, rangeTableListIndex);
-
+		RangeTblEntry *rangeTableEntry = rt_fetch(joinTreeTableIndex, rangeTableList);
 		if (rangeTableEntry->rtekind == RTE_RELATION)
 		{
 			TableEntry *tableEntry = (TableEntry *) palloc0(sizeof(TableEntry));
