@@ -53,11 +53,11 @@ PG_FUNCTION_INFO_V1(stop_metadata_sync_to_node);
 
 /*
  * start_metadata_sync_to_node function creates the metadata in a worker for preparing the
- * worker for accepting MX-table queries. The function first sets the localGroupId of the
- * worker so that the worker knows which tuple in pg_dist_node table represents itself.
- * After that, SQL statetemens for re-creating metadata about mx distributed
- * tables are sent to the worker. Finally, the hasmetadata column of the target node in
- * pg_dist_node is marked as true.
+ * worker for accepting queries. The function first sets the localGroupId of the worker
+ * so that the worker knows which tuple in pg_dist_node table represents itself. After
+ * that, SQL statetemens for re-creating metadata of MX-eligible distributed tables are
+ * sent to the worker. Finally, the hasmetadata column of the target node in pg_dist_node
+ * is marked as true.
  */
 Datum
 start_metadata_sync_to_node(PG_FUNCTION_ARGS)
@@ -122,7 +122,7 @@ start_metadata_sync_to_node(PG_FUNCTION_ARGS)
 /*
  * stop_metadata_sync_to_node function sets the hasmetadata column of the specified node
  * to false in pg_dist_node table, thus indicating that the specified worker node does not
- * receive DDL changes anymore and cannot be used for issuing mx queries.
+ * receive DDL changes anymore and cannot be used for issuing queries.
  */
 Datum
 stop_metadata_sync_to_node(PG_FUNCTION_ARGS)
@@ -149,19 +149,29 @@ stop_metadata_sync_to_node(PG_FUNCTION_ARGS)
 
 
 /*
- * ShouldSyncTableMetadata checks if a distributed table has streaming replication model
- * and hash distribution. In that case the distributed table is considered an MX table,
- * and its metadata is required to exist on the worker nodes.
+ * ShouldSyncTableMetadata checks if the metadata of a distributed table should be
+ * propagated to metadata workers, i.e. the table is an MX table or reference table.
+ * Tables with streaming replication model (which means RF=1) and hash distribution are
+ * considered as MX tables while 2PC replicated tables with none distribution are
+ * reference tables.
  */
 bool
 ShouldSyncTableMetadata(Oid relationId)
 {
 	DistTableCacheEntry *tableEntry = DistributedTableCacheEntry(relationId);
-	bool usesHashDistribution = (tableEntry->partitionMethod == DISTRIBUTE_BY_HASH);
-	bool usesStreamingReplication =
-		(tableEntry->replicationModel == REPLICATION_MODEL_STREAMING);
 
-	if (usesStreamingReplication && usesHashDistribution)
+	bool hashDistributed = (tableEntry->partitionMethod == DISTRIBUTE_BY_HASH);
+	bool noneDistributed = (tableEntry->partitionMethod == DISTRIBUTE_BY_NONE);
+
+	bool streamingReplicated =
+		(tableEntry->replicationModel == REPLICATION_MODEL_STREAMING);
+	bool twoPhaseCommitReplicated =
+		(tableEntry->replicationModel == REPLICATION_MODEL_2PC);
+
+	bool mxTable = (streamingReplicated && hashDistributed);
+	bool referenceTable = (noneDistributed && twoPhaseCommitReplicated);
+
+	if (mxTable || referenceTable)
 	{
 		return true;
 	}
@@ -189,7 +199,7 @@ MetadataCreateCommands(void)
 {
 	List *metadataSnapshotCommandList = NIL;
 	List *distributedTableList = DistributedTableList();
-	List *mxTableList = NIL;
+	List *propagatedTableList = NIL;
 	List *workerNodeList = WorkerNodeList();
 	ListCell *distributedTableCell = NULL;
 	char *nodeListInsertCommand = NULL;
@@ -199,19 +209,19 @@ MetadataCreateCommands(void)
 	metadataSnapshotCommandList = lappend(metadataSnapshotCommandList,
 										  nodeListInsertCommand);
 
-	/* create the list of mx tables */
+	/* create the list of tables whose metadata will be created */
 	foreach(distributedTableCell, distributedTableList)
 	{
 		DistTableCacheEntry *cacheEntry =
 			(DistTableCacheEntry *) lfirst(distributedTableCell);
 		if (ShouldSyncTableMetadata(cacheEntry->relationId))
 		{
-			mxTableList = lappend(mxTableList, cacheEntry);
+			propagatedTableList = lappend(propagatedTableList, cacheEntry);
 		}
 	}
 
-	/* create the mx tables, but not the metadata */
-	foreach(distributedTableCell, mxTableList)
+	/* create the tables, but not the metadata */
+	foreach(distributedTableCell, propagatedTableList)
 	{
 		DistTableCacheEntry *cacheEntry =
 			(DistTableCacheEntry *) lfirst(distributedTableCell);
@@ -227,7 +237,7 @@ MetadataCreateCommands(void)
 	}
 
 	/* construct the foreign key constraints after all tables are created */
-	foreach(distributedTableCell, mxTableList)
+	foreach(distributedTableCell, propagatedTableList)
 	{
 		DistTableCacheEntry *cacheEntry =
 			(DistTableCacheEntry *) lfirst(distributedTableCell);
@@ -240,7 +250,7 @@ MetadataCreateCommands(void)
 	}
 
 	/* after all tables are created, create the metadata */
-	foreach(distributedTableCell, mxTableList)
+	foreach(distributedTableCell, propagatedTableList)
 	{
 		DistTableCacheEntry *cacheEntry =
 			(DistTableCacheEntry *) lfirst(distributedTableCell);
@@ -303,7 +313,7 @@ GetDistributedTableDDLEvents(Oid relationId)
 	metadataCommand = DistributionCreateCommand(cacheEntry);
 	commandList = lappend(commandList, metadataCommand);
 
-	/* commands to create the truncate trigger of the mx table */
+	/* commands to create the truncate trigger of the table */
 	truncateTriggerCreateCommand = TruncateTriggerCreateCommand(relationId);
 	commandList = lappend(commandList, truncateTriggerCreateCommand);
 
@@ -576,7 +586,6 @@ ShardListInsertCommand(List *shardIntervalList)
 		{
 			appendStringInfo(minHashToken, "NULL");
 		}
-
 
 		if (shardInterval->maxValueExists)
 		{
