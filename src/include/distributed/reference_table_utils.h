@@ -14,5 +14,7 @@
 
 extern uint32 CreateReferenceTableColocationId(void);
 extern void ReplicateAllReferenceTablesToAllNodes(void);
+extern void DeleteAllReferenceTablePlacementsFromNode(char *workerName,
+													  uint32 workerPort);
 
 #endif /* REFERENCE_TABLE_UTILS_H_ */

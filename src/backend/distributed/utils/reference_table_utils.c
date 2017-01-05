@@ -24,6 +24,7 @@
 #include "distributed/reference_table_utils.h"
 #include "distributed/resource_lock.h"
 #include "distributed/shardinterval_utils.h"
+#include "distributed/transaction_management.h"
 #include "distributed/worker_manager.h"
 #include "distributed/worker_transaction.h"
 #include "utils/fmgroids.h"
@@ -36,6 +37,7 @@ static void ReplicateSingleShardTableToAllWorkers(Oid relationId);
 static void ReplicateShardToAllWorkers(ShardInterval *shardInterval);
 static void ConvertToReferenceTableMetadata(Oid relationId, uint64 shardId);
 static List * ReferenceTableOidList(void);
+static int CompareOids(const void *leftElement, const void *rightElement);
 
 /* exports for SQL callable functions */
 PG_FUNCTION_INFO_V1(upgrade_to_reference_table);
@@ -129,6 +131,7 @@ ReplicateAllReferenceTablesToAllNodes()
 	workerNodeList = WorkerNodeList();
 	workerCount = list_length(workerNodeList);
 
+	referenceTableList = SortList(referenceTableList, CompareOids);
 	foreach(referenceTableCell, referenceTableList)
 	{
 		Oid referenceTableId = lfirst_oid(referenceTableCell);
@@ -319,6 +322,57 @@ CreateReferenceTableColocationId()
 
 
 /*
+ * DeleteAllReferenceTablePlacementsFromNode function iterates over list of reference
+ * tables and deletes all reference table placements from pg_dist_shard_placement table
+ * for given worker node. It also modifies replication factor of the colocation group of
+ * reference tables so that replication factor will be equal to number of workers.
+ */
+void
+DeleteAllReferenceTablePlacementsFromNode(char *workerName, uint32 workerPort)
+{
+	List *referenceTableList = ReferenceTableOidList();
+	ListCell *referenceTableCell = NULL;
+
+	Oid firstReferenceTableId = InvalidOid;
+	uint32 referenceTableColocationId = INVALID_COLOCATION_ID;
+
+	List *workerNodeList = NIL;
+	int workerCount = 0;
+
+	/* if there is no reference table, we do not need to do anything */
+	if (list_length(referenceTableList) == 0)
+	{
+		return;
+	}
+
+	referenceTableList = SortList(referenceTableList, CompareOids);
+	foreach(referenceTableCell, referenceTableList)
+	{
+		Oid referenceTableId = lfirst_oid(referenceTableCell);
+
+		List *shardIntervalList = LoadShardIntervalList(referenceTableId);
+		ShardInterval *shardInterval = (ShardInterval *) linitial(shardIntervalList);
+		uint64 shardId = shardInterval->shardId;
+
+		LockShardDistributionMetadata(shardId, ExclusiveLock);
+
+		DeleteShardPlacementRow(shardId, workerName, workerPort);
+	}
+
+	/*
+	 * After deleting reference tables placements, we will update replication factor
+	 * column for colocation group of reference tables so that replication factor will
+	 * be equal to worker count again.
+	 */
+	workerNodeList = WorkerNodeList();
+	workerCount = list_length(workerNodeList);
+	firstReferenceTableId = linitial_oid(referenceTableList);
+	referenceTableColocationId = TableColocationId(firstReferenceTableId);
+	UpdateColocationGroupReplicationFactor(referenceTableColocationId, workerCount);
+}
+
+
+/*
  * ReferenceTableOidList function scans pg_dist_partition to create a list of all
  * reference tables. To create the list, it performs sequential scan. Since it is not
  * expected that this function will be called frequently, it is OK not to use index scan.
@@ -347,4 +401,26 @@ ReferenceTableOidList()
 	}
 
 	return referenceTableList;
+}
+
+
+/* CompareOids is a comparison function for sort shard oids */
+static int
+CompareOids(const void *leftElement, const void *rightElement)
+{
+	Oid *leftId = (Oid *) leftElement;
+	Oid *rightId = (Oid *) rightElement;
+
+	if (*leftId > *rightId)
+	{
+		return 1;
+	}
+	else if (*leftId < *rightId)
+	{
+		return -1;
+	}
+	else
+	{
+		return 0;
+	}
 }
