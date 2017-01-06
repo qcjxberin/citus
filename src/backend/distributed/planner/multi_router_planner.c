@@ -953,12 +953,13 @@ FindOriginalRelationId(Expr *columnExpression, List *parentQueryList, Query *que
 
 	if (rangeTableEntry->rtekind == RTE_RELATION)
 	{
+		Var *partitionColumn = NULL;
 		relationId = rangeTableEntry->relid;
-		Var *partitionColumn = PartitionKey(relationId);
+		partitionColumn = PartitionKey(relationId);
 
 		/* reference tables do not have partition column */
-		if (partitionColumn != NULL && candidateColumn->varattno ==
-			partitionColumn->varattno)
+		if (partitionColumn != NULL &&
+			candidateColumn->varattno == partitionColumn->varattno)
 		{
 			*isPartitionColumn = true;
 		}
