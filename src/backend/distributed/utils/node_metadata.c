@@ -357,19 +357,22 @@ RemoveNodeFromCluster(char *nodeName, int32 nodePort, bool forceRemove)
 	EnsureSuperUser();
 
 	hasShardPlacements = NodeHasActiveShardPlacements(nodeName, nodePort);
-	if (hasShardPlacements && forceRemove)
+	if (hasShardPlacements)
 	{
-		ereport(NOTICE, (errmsg("Node %s:%d has active shard placements. Some "
-								"queries may fail after this operation. Use "
-								"select master_add_node('%s', %d) to add this "
-								"node back.",
-								nodeName, nodePort, nodeName,
-								nodePort)));
-	}
-	else if (hasShardPlacements)
-	{
-		ereport(ERROR, (errmsg("you cannot remove a node which has active "
-							   "shard placements")));
+		if (forceRemove)
+		{
+			ereport(NOTICE, (errmsg("Node %s:%d has active shard placements. Some "
+									"queries may fail after this operation. Use "
+									"select master_add_node('%s', %d) to add this "
+									"node back.",
+									nodeName, nodePort, nodeName, nodePort)));
+		}
+		else
+		{
+			ereport(ERROR, (errmsg("you cannot remove a node which has active "
+								   "shard placements"),
+							errhint("Consider using master_disable_node.")));
+		}
 	}
 
 	workerNode = FindWorkerNode(nodeName, nodePort);
