@@ -50,6 +50,8 @@
 #include "utils/syscache.h"
 #include "utils/tqual.h"
 
+extern Oid FindOriginalRelationId(Expr *columnExpression, List *parentQueryList,
+								  Query *query, bool *isPartitionColumn);
 
 /* Config variable managed via guc.c */
 int LimitClauseRowFetchCount = -1; /* number of rows to fetch from each task */
@@ -3330,76 +3332,7 @@ bool
 IsPartitionColumnRecursive(Expr *columnExpression, Query *query)
 {
 	bool isPartitionColumn = false;
-	Var *candidateColumn = NULL;
-	List *rangetableList = query->rtable;
-	Index rangeTableEntryIndex = 0;
-	RangeTblEntry *rangeTableEntry = NULL;
-	Expr *strippedColumnExpression = (Expr *) strip_implicit_coercions(
-		(Node *) columnExpression);
-
-	if (IsA(strippedColumnExpression, Var))
-	{
-		candidateColumn = (Var *) strippedColumnExpression;
-	}
-	else if (IsA(strippedColumnExpression, FieldSelect))
-	{
-		FieldSelect *compositeField = (FieldSelect *) strippedColumnExpression;
-		Expr *fieldExpression = compositeField->arg;
-
-		if (IsA(fieldExpression, Var))
-		{
-			candidateColumn = (Var *) fieldExpression;
-		}
-		else
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot push down this subquery"),
-							errdetail("Only references to column fields are supported")));
-		}
-	}
-
-	if (candidateColumn == NULL)
-	{
-		return false;
-	}
-
-	rangeTableEntryIndex = candidateColumn->varno - 1;
-	rangeTableEntry = list_nth(rangetableList, rangeTableEntryIndex);
-
-	if (rangeTableEntry->rtekind == RTE_RELATION)
-	{
-		Oid relationId = rangeTableEntry->relid;
-		Var *partitionColumn = PartitionKey(relationId);
-
-		/* reference tables do not have partition column */
-		if (partitionColumn == NULL)
-		{
-			isPartitionColumn = false;
-		}
-		else if (candidateColumn->varattno == partitionColumn->varattno)
-		{
-			isPartitionColumn = true;
-		}
-	}
-	else if (rangeTableEntry->rtekind == RTE_SUBQUERY)
-	{
-		Query *subquery = rangeTableEntry->subquery;
-		List *targetEntryList = subquery->targetList;
-		AttrNumber targetEntryIndex = candidateColumn->varattno - 1;
-		TargetEntry *subqueryTargetEntry = list_nth(targetEntryList, targetEntryIndex);
-
-		Expr *subqueryExpression = subqueryTargetEntry->expr;
-		isPartitionColumn = IsPartitionColumnRecursive(subqueryExpression, subquery);
-	}
-	else if (rangeTableEntry->rtekind == RTE_JOIN)
-	{
-		List *joinColumnList = rangeTableEntry->joinaliasvars;
-		AttrNumber joinColumnIndex = candidateColumn->varattno - 1;
-		Expr *joinColumn = list_nth(joinColumnList, joinColumnIndex);
-
-		isPartitionColumn = IsPartitionColumnRecursive(joinColumn, query);
-	}
-
+	FindOriginalRelationId(columnExpression, NIL, query, &isPartitionColumn);
 	return isPartitionColumn;
 }
 

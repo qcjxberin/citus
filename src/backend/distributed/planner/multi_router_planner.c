@@ -126,8 +126,8 @@ static void ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query,
 														   RangeTblEntry *subqueryRte,
 														   Oid *
 														   selectPartitionColumnTableId);
-static Oid FindOriginalRelationId(Expr *columnExpression, List *cteListContext,
-								  Query *query);
+Oid FindOriginalRelationId(Expr *columnExpression, List *parentQueryList,
+						   Query *query, bool *isPartitionColumn);
 static void AddUninstantiatedEqualityQual(Query *query, Var *targetPartitionColumnVar);
 
 
@@ -840,7 +840,8 @@ ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query, RangeTblEntry *inse
 												   targetEntry->resname);
 			TargetEntry *subqeryTargetEntry = NULL;
 			Oid originalRelationId = InvalidOid;
-			List *cteListContext = NIL;
+			List *parentQueryList = NIL;
+			bool isPartitionColumn = false;
 
 			if (originalAttrNo != insertPartitionColumn->varattno)
 			{
@@ -856,9 +857,10 @@ ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query, RangeTblEntry *inse
 				break;
 			}
 
-			cteListContext = list_make1(query->cteList);
+			parentQueryList = list_make2(query, subquery);
 			originalRelationId = FindOriginalRelationId(subqeryTargetEntry->expr,
-														cteListContext, subquery);
+														parentQueryList, subquery,
+														&isPartitionColumn);
 
 			if (originalRelationId == InvalidOid)
 			{
@@ -872,6 +874,7 @@ ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query, RangeTblEntry *inse
 			 */
 			if (PartitionMethod(originalRelationId) == DISTRIBUTE_BY_NONE)
 			{
+				Assert(!isPartitionColumn);
 				partitionColumnsMatch = false;
 				break;
 			}
@@ -881,6 +884,8 @@ ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query, RangeTblEntry *inse
 				partitionColumnsMatch = false;
 				break;
 			}
+
+			Assert(isPartitionColumn);
 
 			partitionColumnsMatch = true;
 			*selectPartitionColumnTableId = originalRelationId;
@@ -904,8 +909,9 @@ ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query, RangeTblEntry *inse
  * or computed value from an inner subquery or cte. This is very similar to
  * IsPartitionColumnRecursive.
  */
-static Oid
-FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *query)
+Oid
+FindOriginalRelationId(Expr *columnExpression, List *parentQueryList, Query *query,
+					   bool *isPartitionColumn)
 {
 	Var *candidateColumn = NULL;
 	List *rangetableList = query->rtable;
@@ -914,6 +920,7 @@ FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *quer
 	Expr *strippedColumnExpression = (Expr *) strip_implicit_coercions(
 		(Node *) columnExpression);
 	Oid relationId = InvalidOid;
+	*isPartitionColumn = false;
 
 	if (IsA(strippedColumnExpression, Var))
 	{
@@ -928,6 +935,12 @@ FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *quer
 		{
 			candidateColumn = (Var *) fieldExpression;
 		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							errmsg("cannot push down this subquery"),
+							errdetail("Only references to column fields are supported")));
+		}
 	}
 
 	if (candidateColumn == NULL)
@@ -941,6 +954,14 @@ FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *quer
 	if (rangeTableEntry->rtekind == RTE_RELATION)
 	{
 		relationId = rangeTableEntry->relid;
+		Var *partitionColumn = PartitionKey(relationId);
+
+		/* reference tables do not have partition column */
+		if (partitionColumn != NULL && candidateColumn->varattno ==
+			partitionColumn->varattno)
+		{
+			*isPartitionColumn = true;
+		}
 	}
 	else if (rangeTableEntry->rtekind == RTE_SUBQUERY)
 	{
@@ -951,9 +972,9 @@ FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *quer
 		Expr *subColumnExpression = subqueryTargetEntry->expr;
 
 		/* append current cteList to an existing cteListContext */
-		cteListContext = lappend(cteListContext, query->cteList);
-		relationId = FindOriginalRelationId(subColumnExpression, cteListContext,
-											subquery);
+		parentQueryList = lappend(parentQueryList, query);
+		relationId = FindOriginalRelationId(subColumnExpression, parentQueryList,
+											subquery, isPartitionColumn);
 	}
 	else if (rangeTableEntry->rtekind == RTE_JOIN)
 	{
@@ -962,14 +983,28 @@ FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *quer
 		Expr *joinColumn = list_nth(joinColumnList, joinColumnIndex);
 
 		/* cteListContext stays the same since still in the same query boundary */
-		relationId = FindOriginalRelationId(joinColumn, cteListContext, query);
+		relationId = FindOriginalRelationId(joinColumn, parentQueryList, query,
+											isPartitionColumn);
 	}
 	else if (rangeTableEntry->rtekind == RTE_CTE)
 	{
-		int cteListIndex = cteListContext->length - rangeTableEntry->ctelevelsup;
-		List *cteList = list_nth(cteListContext, cteListIndex);
+		int cteParentListIndex = list_length(parentQueryList) -
+								 rangeTableEntry->ctelevelsup - 1;
+		Query *cteParentQuery = NULL;
+		List *cteList = NIL;
 		ListCell *cteListCell = NULL;
 		CommonTableExpr *cte = NULL;
+
+		/*
+		 * This should have been an error case, not marking it as error at the moment due to
+		 * usage from IsPartitionColumnRecursive. Callers of that function do not have
+		 * access to parent query list.
+		 */
+		if (cteParentListIndex >= 0)
+		{
+			cteParentQuery = list_nth(parentQueryList, cteParentListIndex);
+			cteList = cteParentQuery->cteList;
+		}
 
 		foreach(cteListCell, cteList)
 		{
@@ -988,10 +1023,9 @@ FindOriginalRelationId(Expr *columnExpression, List *cteListContext, Query *quer
 			AttrNumber targetEntryIndex = candidateColumn->varattno - 1;
 			TargetEntry *targetEntry = list_nth(targetEntryList, targetEntryIndex);
 
-			/* append current cteList to an existing cteListContext */
-			cteListContext = lappend(cteListContext, cteQuery->cteList);
-			relationId = FindOriginalRelationId(targetEntry->expr, cteListContext,
-												cteQuery);
+			parentQueryList = lappend(parentQueryList, query);
+			relationId = FindOriginalRelationId(targetEntry->expr, parentQueryList,
+												cteQuery, isPartitionColumn);
 		}
 	}
 
