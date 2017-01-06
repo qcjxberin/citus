@@ -20,6 +20,7 @@
 #include "distributed/master_protocol.h"
 #include "distributed/master_metadata_utility.h"
 #include "distributed/metadata_cache.h"
+#include "distributed/metadata_sync.h"
 #include "distributed/multi_logical_planner.h"
 #include "distributed/reference_table_utils.h"
 #include "distributed/resource_lock.h"
@@ -244,16 +245,34 @@ ReplicateShardToAllWorkers(ShardInterval *shardInterval)
 
 		if (targetPlacement == NULL || targetPlacement->shardState != FILE_FINALIZED)
 		{
+			uint64 placementId = 0;
+
 			SendCommandListToWorkerInSingleTransaction(nodeName, nodePort, tableOwner,
 													   ddlCommandList);
 			if (targetPlacement == NULL)
 			{
-				InsertShardPlacementRow(shardId, INVALID_PLACEMENT_ID, FILE_FINALIZED, 0,
+				placementId = GetNextPlacementId();
+				InsertShardPlacementRow(shardId, placementId, FILE_FINALIZED, 0,
 										nodeName, nodePort);
 			}
 			else
 			{
-				UpdateShardPlacementState(targetPlacement->placementId, FILE_FINALIZED);
+				placementId = targetPlacement->placementId;
+				UpdateShardPlacementState(placementId, FILE_FINALIZED);
+			}
+
+			/*
+			 * Although ReplicateShardToAllWorkers is used only for reference tables,
+			 * the name is so generic to assume that, therefore we do a check before
+			 * propagating the metadata to workers.
+			 */
+			if (ShouldSyncTableMetadata(shardInterval->relationId))
+			{
+				char *placementCommand = PlacementUpsertCommand(shardId, placementId,
+																FILE_FINALIZED, 0,
+																nodeName, nodePort);
+
+				SendCommandToWorkers(WORKERS_WITH_METADATA, placementCommand);
 			}
 		}
 	}
