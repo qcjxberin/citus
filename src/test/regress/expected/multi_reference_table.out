@@ -1146,7 +1146,7 @@ FROM
 WHERE
 	colocated_table_test_2.value_4 = reference_table_test.value_4
 RETURNING value_1, value_2;
-ERROR:  cannot plan distributed INSERT INTO .. SELECT query due to data type mismatch of partition columns
+ERROR:  cannot plan distributed INSERT INTO ... SELECT query because partition column types do not match
 DETAIL:  The data type of the target table's partition column should exactly match the data type of the corresponding target list entry in the subquery.
 -- partition column value comes from reference table which should error out
 INSERT INTO
@@ -1158,8 +1158,8 @@ FROM
 WHERE
 	colocated_table_test_2.value_4 = reference_table_test.value_4
 RETURNING value_1, value_2;
-ERROR:  cannot plan distributed INSERT INTO .. SELECT query due to mismatch of partition columns
-DETAIL:  The target table's partition column should match a partition column on the corresponding target list entry of the subquery.
+ERROR:  cannot plan distributed INSERT INTO ... SELECT query because of mismatched partition columns
+DETAIL:  The target table's partition column should correspond to a partition column in the subquery.
 -- some tests for mark_tables_colocated
 -- should error out
 SELECT mark_tables_colocated('colocated_table_test_2', ARRAY['reference_table_test']);

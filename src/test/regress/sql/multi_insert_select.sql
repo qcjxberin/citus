@@ -940,14 +940,18 @@ SET citus.shard_count TO 4;
 SET citus.shard_replication_factor TO 1;
 CREATE TABLE text_table (part_col text, val int);
 CREATE TABLE char_table (part_col char[], val int);
+create table table_with_starts_with_defaults (a int DEFAULT 5, b int, c int);
 SELECT create_distributed_table('text_table', 'part_col');
 SELECT create_distributed_table('char_table','part_col');
+SELECT create_distributed_table('table_with_starts_with_defaults', 'c');
 
 INSERT INTO text_table (part_col) 
   SELECT 
     CASE WHEN part_col = 'onder' THEN 'marco'
       END 
 FROM text_table ;
+
+
 
 INSERT INTO text_table (part_col) SELECT COALESCE(part_col, 'onder') FROM text_table;
 INSERT INTO text_table (part_col) SELECT GREATEST(part_col, 'jason') FROM text_table;
@@ -958,6 +962,7 @@ INSERT INTO text_table (part_col) SELECT part_col::text from char_table;
 INSERT INTO text_table (part_col) SELECT (part_col = 'burak') is true FROM text_table;
 INSERT INTO text_table (part_col) SELECT val FROM text_table;
 INSERT INTO text_table (part_col) SELECT val::text FROM text_table;
+insert into table_with_starts_with_defaults (b,c) select b,c FROM table_with_starts_with_defaults;
 
 DROP TABLE raw_events_first CASCADE;
 DROP TABLE raw_events_second;
@@ -967,3 +972,4 @@ DROP TABLE table_with_defaults;
 DROP TABLE table_with_serial;
 DROP TABLE text_table;
 DROP TABLE char_table;
+DROP TABLE table_with_starts_with_defaults;
