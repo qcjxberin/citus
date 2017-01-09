@@ -999,7 +999,8 @@ ErrorIfInsertPartitionColumnDoesNotMatchSelect(Query *query, RangeTblEntry *inse
 	if (!targetTableHasPartitionColumn)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("cannot plan distributed INSERT INTO ... SELECT query"),
+						errmsg("cannot plan distributed INSERT INTO ... SELECT query "
+							   "because of partition column restrictions"),
 						errdetail("INSERT INTO ... SELECT queries must include the "
 								  "target table's partition column.")));
 	}
