@@ -228,7 +228,10 @@ MultiExplainOneQuery(Query *query, IntoClause *into, ExplainState *es,
 		es->indent += 1;
 	}
 
-	routerExecutablePlan = multiPlan->routerExecutable;
+	if (multiPlan->planType == MULTI_PLAN_ROUTER)
+	{
+		routerExecutablePlan = true;
+	}
 
 	if (routerExecutablePlan)
 	{

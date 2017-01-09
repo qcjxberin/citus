@@ -180,7 +180,7 @@ static inline void CopyFlushOutput(CopyOutState outputState, char *start, char *
 /* CitusCopyDestReceiver functions */
 static void CitusCopyDestReceiverStartup(DestReceiver *copyDest, int operation,
 										 TupleDesc inputTupleDesc);
-static void CitusCopyDestReceiverReceive(TupleTableSlot *slot,
+static bool CitusCopyDestReceiverReceive(TupleTableSlot *slot,
 										 DestReceiver *copyDest);
 static void CitusCopyDestReceiverShutdown(DestReceiver *destReceiver);
 static void CitusCopyDestReceiverDestroy(DestReceiver *destReceiver);
@@ -1915,7 +1915,7 @@ CopyFlushOutput(CopyOutState cstate, char *start, char *pointer)
  * a distributed table.
  */
 CitusCopyDestReceiver *
-CreateCitusCopyDestReceiver(Oid tableId, EState *estate, List *inputTargetList)
+CreateCitusCopyDestReceiver(Oid tableId, List *inputTargetList, DestReceiver *outerDest)
 {
 	CitusCopyDestReceiver *copyDest = NULL;
 
@@ -1931,7 +1931,6 @@ CreateCitusCopyDestReceiver(Oid tableId, EState *estate, List *inputTargetList)
 	/* set up output parameters */
 	copyDest->distributedRelationId = tableId;
 	copyDest->inputTargetList = inputTargetList;
-	copyDest->estate = estate;
 
 	return copyDest;
 }
@@ -1951,7 +1950,6 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 	char *schemaName = get_namespace_name(schemaOid);
 
 	Relation distributedRelation = NULL;
-	TupleDesc tableTupleDescriptor = NULL;
 	int columnIndex = 0;
 	List *columnNameList = NIL;
 
@@ -1976,7 +1974,6 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 
 	/* look up table schema */
 	distributedRelation = heap_open(tableId, RowExclusiveLock);
-	tableTupleDescriptor = RelationGetDescr(distributedRelation);
 
 	/* look up distributed table properties */
 	partitionColumn = PartitionColumn(tableId, 0);
@@ -2044,7 +2041,7 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 	copyOutState->delim = (char *) delimiterCharacter;
 	copyOutState->null_print = (char *) nullPrintCharacter;
 	copyOutState->null_print_client = (char *) nullPrintCharacter;
-	copyOutState->binary = false;//CanUseBinaryCopyFormat(inputTupleDescriptor, copyOutState);
+	copyOutState->binary = CanUseBinaryCopyFormat(inputTupleDescriptor, copyOutState);
 	copyOutState->fe_msgbuf = makeStringInfo();
 	copyOutState->rowcontext = executorTupleContext;
 	copyDest->copyOutState = copyOutState;
@@ -2079,11 +2076,6 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 			partitionColumnIndex = columnIndex;
 		}
 
-		elog(DEBUG3, "input column %d goes into %s using %s",
-					 columnIndex,
-					 columnName,
-					 get_func_name(copyDest->columnOutputFunctions[columnIndex].fn_oid));
-
 		columnIndex++;
 	}
 
@@ -2112,12 +2104,10 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 }
 
 
-static void
+static bool
 CitusCopyDestReceiverReceive(TupleTableSlot *slot, DestReceiver *dest)
 {
 	CitusCopyDestReceiver *copyDest = (CitusCopyDestReceiver *) dest;
-
-	EState *estate = copyDest->estate;
 
 	char partitionMethod = copyDest->partitionMethod;
 	int partitionColumnIndex = copyDest->partitionColumnIndex;
@@ -2135,8 +2125,8 @@ CitusCopyDestReceiverReceive(TupleTableSlot *slot, DestReceiver *dest)
 	CopyOutState copyOutState = copyDest->copyOutState;
 	FmgrInfo *columnOutputFunctions = copyDest->columnOutputFunctions;
 
-	Datum *columnValues = slot->tts_values;
-	bool *columnNulls = slot->tts_isnull;
+	Datum *columnValues = NULL;
+	bool *columnNulls = NULL;
 
 	Datum partitionColumnValue = 0;
 	ShardInterval *shardInterval = NULL;
@@ -2146,6 +2136,11 @@ CitusCopyDestReceiverReceive(TupleTableSlot *slot, DestReceiver *dest)
 	ShardConnections *shardConnections = NULL;
 
 	MemoryContext oldContext = MemoryContextSwitchTo(copyOutState->rowcontext);
+
+	slot_getallattrs(slot);
+
+	columnValues = slot->tts_values;
+	columnNulls = slot->tts_isnull;
 
 	if (columnNulls[partitionColumnIndex])
 	{
@@ -2201,7 +2196,7 @@ CitusCopyDestReceiverReceive(TupleTableSlot *slot, DestReceiver *dest)
 					  copyOutState, columnOutputFunctions);
 	SendCopyDataToAll(copyOutState->fe_msgbuf, shardConnections->connectionList);
 
-	estate->es_processed += 1;
+	return true;
 }
 
 
@@ -2243,5 +2238,16 @@ CitusCopyDestReceiverDestroy(DestReceiver *destReceiver)
 {
 	CitusCopyDestReceiver *copyDest = (CitusCopyDestReceiver *) destReceiver;
 
-	pfree(copyDest->copyOutState);
+	if (copyDest->copyOutState)
+	{
+		pfree(copyDest->copyOutState);
+	}
+
+	if (copyDest->columnOutputFunctions)
+	{
+		pfree(copyDest->columnOutputFunctions);
+	}
+
+
+	pfree(copyDest);
 }

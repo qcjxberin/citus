@@ -54,7 +54,6 @@ typedef struct CitusCopyDestReceiver
 
 	Oid distributedRelationId;
 	List *inputTargetList;
-	EState *estate;
 
 	Relation distributedRelation;
 	char partitionMethod;
@@ -80,8 +79,8 @@ typedef struct CitusCopyDestReceiver
 } CitusCopyDestReceiver;
 
 extern CitusCopyDestReceiver * CreateCitusCopyDestReceiver(Oid relationId,
-														   EState *estate,
-														   List *inputTargetList);
+														   List *inputTargetList,
+														   DestReceiver *outerDest);
 
 
 /* function declarations for copying into a distributed table */

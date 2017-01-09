@@ -15,6 +15,8 @@
 #include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
+#include "distributed/metadata_cache.h"
+#include "distributed/multi_copy.h"
 #include "distributed/multi_executor.h"
 #include "distributed/multi_master_planner.h"
 #include "distributed/multi_planner.h"
@@ -24,8 +26,12 @@
 #include "distributed/multi_utility.h"
 #include "distributed/worker_protocol.h"
 #include "executor/execdebug.h"
+#include "optimizer/planner.h"
+#include "parser/parsetree.h"
 #include "storage/lmgr.h"
+#include "tcop/pquery.h"
 #include "tcop/utility.h"
+#include "utils/portal.h"
 #include "utils/snapmgr.h"
 
 
@@ -49,8 +55,8 @@ multi_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	if (HasCitusToplevelNode(planStatement))
 	{
 		MultiPlan *multiPlan = GetMultiPlan(planStatement);
-		MultiExecutorType executorType = MULTI_EXECUTOR_INVALID_FIRST;
 		Job *workerJob = multiPlan->workerJob;
+		MultiExecutorType executorType = MULTI_EXECUTOR_INVALID_FIRST;
 
 		ExecCheckRTPerms(planStatement->rtable, true);
 
@@ -70,6 +76,46 @@ multi_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
 			/* drop into the router executor */
 			RouterExecutorStart(queryDesc, eflags, taskList);
+		}
+		else if (executorType == MULTI_EXECUTOR_INSERT_SELECT)
+		{
+			Query *subquery = multiPlan->masterQuery;
+			PlannedStmt *subquerySelectPlan = pg_plan_query(subquery, 0, queryDesc->params);
+
+			Index relationIndex = linitial_int(planStatement->resultRelations);
+			RangeTblEntry *relationEntry = rt_fetch(relationIndex, planStatement->rtable);
+			Oid relationId = relationEntry->relid;
+
+			List *insertTargetList = multiPlan->insertTargetList;
+
+			/*
+			 * Set up a DestReceiver that copies into the distributed table.
+			 */
+			CitusCopyDestReceiver *copyDest =
+				CreateCitusCopyDestReceiver(relationId, insertTargetList,
+											queryDesc->dest);
+
+			queryDesc->dest = (DestReceiver *) copyDest;
+
+			/*
+			 * Replace to-be-run query with the master select query. As the
+			 * planned statement is now replaced we can't call GetMultiPlan() in
+			 * the later hooks, so we set a flag marking this as a distributed
+			 * statement running on the master. That e.g. allows us to drop the
+			 * temp table later.
+			 *
+			 * We copy the original statement's queryId, to allow
+			 * pg_stat_statements and similar extension to associate the
+			 * statement with the toplevel statement.
+			 */
+			subquerySelectPlan->queryId = queryDesc->plannedstmt->queryId;
+			queryDesc->plannedstmt = subquerySelectPlan;
+
+			eflags |= EXEC_FLAG_CITUS_INSERT_SELECT;
+
+			/* subquery may be distributed, start from top of the executor chain */
+			ExecutorStart(queryDesc, eflags);
+			return;
 		}
 		else
 		{
@@ -200,6 +246,15 @@ multi_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, tuplecount_t co
 {
 	int eflags = queryDesc->estate->es_top_eflags;
 
+	if (eflags & EXEC_FLAG_CITUS_INSERT_SELECT)
+	{
+		/*
+		 * Pretend to the executor that we're performing a SELECT to
+		 * trigger DestReceiver calls.
+		 */
+		queryDesc->operation = CMD_SELECT;
+	}
+
 	if (eflags & EXEC_FLAG_CITUS_ROUTER_EXECUTOR)
 	{
 		/* drop into the router executor */
@@ -209,6 +264,16 @@ multi_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, tuplecount_t co
 	{
 		/* drop into the standard executor */
 		standard_ExecutorRun(queryDesc, direction, count);
+	}
+
+	if (eflags & EXEC_FLAG_CITUS_INSERT_SELECT)
+	{
+		/*
+		 * Before starting the INSERT..SELECT command we changed the operation
+		 * to CMD_SELECT to send tuples to DestReceiver. Now change it back
+		 * to give the appropriate command tag.
+		 */
+		queryDesc->operation = CMD_INSERT;
 	}
 }
 

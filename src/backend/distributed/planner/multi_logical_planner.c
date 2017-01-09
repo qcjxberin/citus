@@ -1495,8 +1495,8 @@ NeedsDistributedPlanning(Query *queryTree)
 	/* users can't mix local and distributed relations in one query */
 	if (hasLocalRelation && hasDistributedRelation)
 	{
-		ereport(ERROR, (errmsg("cannot plan queries that include both regular and "
-							   "partitioned relations")));
+/*		ereport(ERROR, (errmsg("cannot plan queries that include both regular and " */
+/*							   "partitioned relations"))); */
 	}
 
 	return hasDistributedRelation;

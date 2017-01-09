@@ -22,12 +22,12 @@
 #include "distributed/multi_physical_planner.h"
 #include "distributed/multi_router_planner.h"
 
+#include "nodes/print.h"
+
 #include "executor/executor.h"
-
 #include "nodes/makefuncs.h"
-
 #include "optimizer/planner.h"
-
+#include "parser/parsetree.h"
 #include "utils/memutils.h"
 
 
@@ -48,8 +48,65 @@ multi_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt *result = NULL;
 	bool needsDistributedPlanning = NeedsDistributedPlanning(parse);
+	bool isInsertSelect = InsertSelectQuery(parse);
 	Query *originalQuery = NULL;
 	RelationRestrictionContext *restrictionContext = NULL;
+
+	if (isInsertSelect && needsDistributedPlanning)
+	{
+		Query *insertSelectQuery = copyObject(parse);
+
+		RangeTblRef *reference = linitial(insertSelectQuery->jointree->fromlist);
+		RangeTblEntry *subqueryRte = rt_fetch(reference->rtindex,
+											  insertSelectQuery->rtable);
+		RangeTblEntry *insertRte = rt_fetch(insertSelectQuery->resultRelation,
+											insertSelectQuery->rtable);
+
+		Query *subquery = (Query *) subqueryRte->subquery;
+		MultiPlan *physicalPlan = NULL;
+		PlannedStmt *insertSelectPlan = NULL;
+
+		restrictionContext = CreateAndPushRestrictionContext();
+
+		if (list_length(insertSelectQuery->cteList) > 0)
+		{
+			ereport(WARNING, (errmsg("local INSERT..SELECT with CTEs into a "
+									 "distributed table is unsupported")));
+		}
+
+		if (list_length(insertSelectQuery->returningList) > 0)
+		{
+			ereport(WARNING, (errmsg("local INSERT..SELECT with RETURNING into a "
+									 "distributed table is unsupported")));
+		}
+
+		if (insertSelectQuery->onConflict)
+		{
+			ereport(WARNING, (errmsg("local INSERT..SELECT with ON CONFLICT into a "
+									 "distributed table is unsupported")));
+		}
+
+		ReorderInsertSelectTargetLists(insertSelectQuery, insertRte, subqueryRte);
+
+		/*
+		 * We don't plan the subquery yet, since we cannot serialise a
+		 * PlannedStmt as part of a MultiPlan prior to PostgreSQL 9.6.
+		 * Instead, we defer planning to the executor.
+		 */
+
+		insertSelectPlan = standard_planner(parse, cursorOptions, boundParams);
+
+		physicalPlan = CitusMakeNode(MultiPlan);
+		physicalPlan->planType = MULTI_PLAN_INSERT_SELECT;
+		physicalPlan->masterQuery = subquery;
+		physicalPlan->insertTargetList = insertSelectQuery->targetList;
+
+		result = MultiQueryContainerNode(insertSelectPlan, physicalPlan);
+
+		PopRestrictionContext();
+
+		return result;
+	}
 
 	/*
 	 * standard_planner scribbles on it's input, but for deparsing we need the
@@ -75,7 +132,7 @@ multi_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		 * to a single shard, or if the pruned shards aren't colocated,
 		 * we error out.
 		 */
-		if (InsertSelectQuery(parse))
+		if (isInsertSelect)
 		{
 			AddUninstantiatedPartitionRestriction(parse);
 		}

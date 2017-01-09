@@ -23,6 +23,7 @@
 #include "distributed/multi_logical_planner.h"
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"
+#include "nodes/plannodes.h"
 #include "utils/array.h"
 
 
@@ -59,6 +60,14 @@ typedef enum CitusRTEKind
 	CITUS_RTE_SHARD,
 	CITUS_RTE_REMOTE_QUERY
 } CitusRTEKind;
+
+
+typedef enum MultiPlanType
+{
+	MULTI_PLAN_SELECT = 0,
+	MULTI_PLAN_ROUTER = 1,
+	MULTI_PLAN_INSERT_SELECT = 2
+} MultiPlanType;
 
 
 /* Enumeration that defines the partition type for a remote job */
@@ -211,10 +220,11 @@ typedef struct JoinSequenceNode
 typedef struct MultiPlan
 {
 	CitusNode type;
+	MultiPlanType planType;
 	Job *workerJob;
 	Query *masterQuery;
 	char *masterTableName;
-	bool routerExecutable;
+	List *insertTargetList;
 } MultiPlan;
 
 

@@ -42,17 +42,26 @@ MultiExecutorType
 JobExecutorType(MultiPlan *multiPlan)
 {
 	Job *job = multiPlan->workerJob;
-	List *workerTaskList = job->taskList;
 	List *workerNodeList = WorkerNodeList();
-	int taskCount = list_length(workerTaskList);
 	int workerNodeCount = list_length(workerNodeList);
-	double tasksPerNode = taskCount / ((double) workerNodeCount);
-	int dependedJobCount = list_length(job->dependedJobList);
+	List *workerTaskList = NULL;
+	int taskCount = 0;
+	double tasksPerNode = 0;
+	int dependedJobCount = 0;
 	MultiExecutorType executorType = TaskExecutorType;
-	bool routerExecutablePlan = multiPlan->routerExecutable;
+
+	if (multiPlan->planType == MULTI_PLAN_INSERT_SELECT)
+	{
+		ereport(DEBUG2, (errmsg("Plan is INSERT .. SELECT")));
+		return MULTI_EXECUTOR_INSERT_SELECT;
+	}
+
+	workerTaskList = job->taskList;
+	taskCount = list_length(workerTaskList);
+	tasksPerNode = taskCount / ((double) workerNodeCount);
 
 	/* check if can switch to router executor */
-	if (routerExecutablePlan)
+	if (multiPlan->planType == MULTI_PLAN_ROUTER)
 	{
 		ereport(DEBUG2, (errmsg("Plan is router executable")));
 		return MULTI_EXECUTOR_ROUTER;

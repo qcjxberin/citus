@@ -164,7 +164,7 @@ MultiRouterPlanCreate(Query *originalQuery, Query *query,
 	/* plans created by router planner are always router executable */
 	if (multiPlan != NULL)
 	{
-		multiPlan->routerExecutable = true;
+		multiPlan->planType = MULTI_PLAN_ROUTER;
 	}
 
 	return multiPlan;
@@ -2554,6 +2554,19 @@ ReorderInsertSelectTargetLists(Query *originalQuery, RangeTblEntry *insertRte,
 			newSubqueryTargetEntry->resno = resno;
 			newSubqueryTargetlist = lappend(newSubqueryTargetlist,
 											newSubqueryTargetEntry);
+
+			/* ugly way of moving casts from insert to subquery target list */
+			if (IsA(oldInsertTargetEntry->expr, FuncExpr))
+			{
+				FuncExpr *oldExpression =
+					(FuncExpr *) copyObject(oldInsertTargetEntry->expr);
+
+				/* replace cast expression with subquery expression */
+				oldExpression->args = list_make1(newSubqueryTargetEntry->expr);
+
+				/* put the cast into the subquery target entry */
+				newSubqueryTargetEntry->expr = (Expr *) oldExpression;
+			}
 		}
 		else
 		{

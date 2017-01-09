@@ -16,6 +16,7 @@
 /* signal currently executed statement is a master select statement or router execution */
 #define EXEC_FLAG_CITUS_MASTER_SELECT 0x100
 #define EXEC_FLAG_CITUS_ROUTER_EXECUTOR 0x200
+#define EXEC_FLAG_CITUS_INSERT_SELECT 0x400
 
 #if (PG_VERSION_NUM >= 90600)
 #define tuplecount_t uint64

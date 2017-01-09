@@ -220,7 +220,15 @@ MultiPhysicalPlanCreate(MultiTreeRoot *multiTree)
 	multiPlan->workerJob = workerJob;
 	multiPlan->masterQuery = masterQuery;
 	multiPlan->masterTableName = jobSchemaName->data;
-	multiPlan->routerExecutable = MultiPlanRouterExecutable(multiPlan);
+
+	if (MultiPlanRouterExecutable(multiPlan))
+	{
+		multiPlan->planType = MULTI_PLAN_ROUTER;
+	}
+	else
+	{
+		multiPlan->planType = MULTI_PLAN_SELECT;
+	}
 
 	return multiPlan;
 }
