@@ -105,7 +105,7 @@ END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION pg_catalog.citus_run_on_all_workers(command text,
+CREATE OR REPLACE FUNCTION pg_catalog.run_command_on_workers(command text,
 													parallel bool default true,
 													OUT nodename text,
 													OUT nodeport int,
@@ -130,14 +130,14 @@ END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION pg_catalog.citus_run_on_all_placements(table_name regclass,
-																  command text,
-																  parallel bool default true,
-																  OUT nodename text,
-																  OUT nodeport int,
-																  OUT shardid bigint,
-																  OUT success bool,
-																  OUT result text)
+CREATE OR REPLACE FUNCTION pg_catalog.run_command_on_placements(table_name regclass,
+																command text,
+																parallel bool default true,
+																OUT nodename text,
+																OUT nodeport int,
+																OUT shardid bigint,
+																OUT success bool,
+																OUT result text)
 	RETURNS SETOF record
 	LANGUAGE plpgsql
 	AS $function$
@@ -170,7 +170,7 @@ END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION pg_catalog.citus_run_on_all_colocated_placements(
+CREATE OR REPLACE FUNCTION pg_catalog.run_command_on_colocated_placements(
 																 table_name1 regclass,
 																 table_name2 regclass,
 																 command text,
@@ -242,12 +242,12 @@ END;
 $function$;
 
 
-CREATE OR REPLACE FUNCTION pg_catalog.citus_run_on_all_shards(table_name regclass,
-															  command text,
-															  parallel bool default true,
-															  OUT shardid bigint,
-															  OUT success bool,
-															  OUT result text)
+CREATE OR REPLACE FUNCTION pg_catalog.run_command_on_shards(table_name regclass,
+															command text,
+															parallel bool default true,
+															OUT shardid bigint,
+															OUT success bool,
+															OUT result text)
 	RETURNS SETOF record
 	LANGUAGE plpgsql
 	AS $function$

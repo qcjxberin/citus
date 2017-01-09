@@ -204,18 +204,18 @@ SELECT * FROM master_run_on_worker(ARRAY[:node_name]::text[], ARRAY[:node_port]:
 SELECT * FROM master_run_on_worker(ARRAY[:node_name]::text[], ARRAY[:node_port]::int[],
 								   ARRAY['select count(*) from second_table']::text[],
 								   true);
--- citus_run_on_XXX tests
-SELECT * FROM citus_run_on_all_workers('select 1') ORDER BY 2 ASC;
-SELECT * FROM citus_run_on_all_workers('select count(*) from pg_dist_partition') ORDER BY 2 ASC;
+-- run_command_on_XXX tests
+SELECT * FROM run_command_on_workers('select 1') ORDER BY 2 ASC;
+SELECT * FROM run_command_on_workers('select count(*) from pg_dist_partition') ORDER BY 2 ASC;
 
 -- make sure run_on_all_placements respects shardstate
 CREATE TABLE check_placements (key int);
 SELECT master_create_distributed_table('check_placements', 'key', 'hash');
 SELECT master_create_worker_shards('check_placements', 5, 2);
-SELECT * FROM citus_run_on_all_placements('check_placements', 'select 1');
+SELECT * FROM run_command_on_placements('check_placements', 'select 1');
 UPDATE pg_dist_shard_placement SET shardstate = 3
 	WHERE shardid % 2 = 0 AND nodeport = :worker_1_port;
-SELECT * FROM citus_run_on_all_placements('check_placements', 'select 1');
+SELECT * FROM run_command_on_placements('check_placements', 'select 1');
 DROP TABLE check_placements CASCADE;
 
 -- make sure run_on_all_colocated_placements correctly detects colocation
@@ -225,34 +225,34 @@ SELECT master_create_worker_shards('check_colocated', 5, 2);
 CREATE TABLE second_table (key int);
 SELECT master_create_distributed_table('second_table', 'key', 'hash');
 SELECT master_create_worker_shards('second_table', 4, 2);
-SELECT * FROM citus_run_on_all_colocated_placements('check_colocated', 'second_table',
-													'select 1');
+SELECT * FROM run_command_on_colocated_placements('check_colocated', 'second_table',
+												  'select 1');
 -- even when the difference is in replication factor, an error is thrown
 SELECT master_drop_all_shards('second_table'::regclass, current_schema(), 'second_table');
 SELECT master_create_worker_shards('second_table', 5, 1);
-SELECT * FROM citus_run_on_all_colocated_placements('check_colocated', 'second_table',
-													'select 1');
+SELECT * FROM run_command_on_colocated_placements('check_colocated', 'second_table',
+												  'select 1');
 -- when everything matches, the command is run!
 SELECT master_drop_all_shards('second_table'::regclass, current_schema(), 'second_table');
 SELECT master_create_worker_shards('second_table', 5, 2);
-SELECT * FROM citus_run_on_all_colocated_placements('check_colocated', 'second_table',
-													'select 1');
+SELECT * FROM run_command_on_colocated_placements('check_colocated', 'second_table',
+												  'select 1');
 -- when a placement is invalid considers the tables to not be colocated
 UPDATE pg_dist_shard_placement SET shardstate = 3 WHERE shardid = (
 		SELECT shardid FROM pg_dist_shard
 		WHERE nodeport = :worker_1_port AND logicalrelid = 'second_table'::regclass
 		ORDER BY 1 ASC LIMIT 1
 );
-SELECT * FROM citus_run_on_all_colocated_placements('check_colocated', 'second_table',
-													'select 1');
+SELECT * FROM run_command_on_colocated_placements('check_colocated', 'second_table',
+												  'select 1');
 -- when matching placement is also invalid, considers the tables to be colocated
 UPDATE pg_dist_shard_placement SET shardstate = 3 WHERE shardid = (
 		SELECT shardid FROM pg_dist_shard
 		WHERE nodeport = :worker_1_port AND logicalrelid = 'check_colocated'::regclass
 		ORDER BY 1 ASC LIMIT 1
 );
-SELECT * FROM citus_run_on_all_colocated_placements('check_colocated', 'second_table',
-													'select 1');
+SELECT * FROM run_command_on_colocated_placements('check_colocated', 'second_table',
+												  'select 1');
 DROP TABLE check_colocated CASCADE;
 DROP TABLE second_table CASCADE;
 
@@ -260,9 +260,9 @@ DROP TABLE second_table CASCADE;
 CREATE TABLE check_shards (key int);
 SELECT master_create_distributed_table('check_shards', 'key', 'hash');
 SELECT master_create_worker_shards('check_shards', 5, 2);
-SELECT * FROM citus_run_on_all_shards('check_shards', 'select 1');
+SELECT * FROM run_command_on_shards('check_shards', 'select 1');
 UPDATE pg_dist_shard_placement SET shardstate = 3 WHERE shardid % 2 = 0;
-SELECT * FROM citus_run_on_all_shards('check_shards', 'select 1');
+SELECT * FROM run_command_on_shards('check_shards', 'select 1');
 DROP TABLE check_shards CASCADE;
 
 -- set SHOW_CONTEXT back to default
