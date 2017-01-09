@@ -364,115 +364,117 @@ MultiPlanTree(Query *queryTree)
 static void
 ErrorIfQueryNotSupported(Query *queryTree)
 {
-	char *errorDetail = NULL;
+	char *errorMessage = NULL;
 	bool hasTablesample = false;
 	bool hasUnsupportedJoin = false;
 	bool hasComplexJoinOrder = false;
 	bool hasComplexRangeTableType = false;
 	bool preconditionsSatisfied = true;
-	const char *errorHint = NULL;
-	const char *joinHint = "Consider joining tables on partition column and have "
-						   "equal filter on joining columns.";
-	const char *filterHint = "Consider using an equality filter on the distributed "
-							 "table's partition column.";
+	const char *errorDetail = NULL;
+	const char *joinDetail = "Consider joining tables on partition column and have "
+							 "equal filter on joining columns.";
+	const char *filterDetail = "Consider using an equality filter on the distributed "
+							   "table's partition column.";
 
 	if (queryTree->hasSubLinks)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Subqueries other than in from-clause are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with subqueries other than "
+					   "in from-clause";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->hasWindowFuncs)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Window functions are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with window functions";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->setOperations)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Union, Intersect, or Except are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with union, intersect, or except";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->hasRecursive)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Recursive queries are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with recursive";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->cteList)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Common Table Expressions are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with common table expressions";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->hasForUpdate)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "For Update/Share commands are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with for update/share commands";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->distinctClause)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Distinct clause is currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with distinct clause";
+		errorDetail = filterDetail;
 	}
 
 	if (queryTree->groupingSets)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Grouping sets, cube, and rollup is currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with grouping sets, cube, "
+					   "or rollup";
+		errorDetail = filterDetail;
 	}
 
 	hasTablesample = HasTablesample(queryTree);
 	if (hasTablesample)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Tablesample is currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with tablesample";
+		errorDetail = filterDetail;
 	}
 
 	hasUnsupportedJoin = HasUnsupportedJoinWalker((Node *) queryTree->jointree, NULL);
 	if (hasUnsupportedJoin)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Join types other than inner/outer joins are currently unsupported";
-		errorHint = joinHint;
+		errorMessage = "cannot run distributed queries with join types other than "
+					   "inner/outer joins";
+		errorDetail = joinDetail;
 	}
 
 	hasComplexJoinOrder = HasComplexJoinOrder(queryTree);
 	if (hasComplexJoinOrder)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Complex join orders are currently unsupported";
-		errorHint = joinHint;
+		errorMessage = "cannot run distributed queries with complex join orders";
+		errorDetail = joinDetail;
 	}
 
 	hasComplexRangeTableType = HasComplexRangeTableType(queryTree);
 	if (hasComplexRangeTableType)
 	{
 		preconditionsSatisfied = false;
-		errorDetail = "Complex table expressions are currently unsupported";
-		errorHint = filterHint;
+		errorMessage = "cannot run distributed queries with complex table expressions";
+		errorDetail = filterDetail;
 	}
 
 
 	/* finally check and error out if not satisfied */
 	if (!preconditionsSatisfied)
 	{
-		bool showHint = ErrorHintRequired(errorHint, queryTree);
+		bool showHint = ErrorHintRequired(errorDetail, queryTree);
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("cannot perform distributed planning on this query"),
-						errdetail("%s", errorDetail),
-						showHint ? errhint("%s", errorHint) : 0));
+						errmsg("%s", errorMessage),
+						showHint ? errdetail("%s", errorDetail) : 0));
 	}
 }
 
